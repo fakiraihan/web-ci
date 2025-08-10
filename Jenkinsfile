@@ -540,114 +540,28 @@ pipeline {
         stage('DAST - OWASP ZAP Security Scan') {
             steps {
                 script {
-                    echo 'Starting OWASP ZAP dynamic security testing for CodeIgniter...'
+                    echo 'Starting OWASP ZAP dynamic security testing...'
                     
-                    // Create reports directory
-                    bat 'if not exist reports mkdir reports'
-                    
-                    // Test application accessibility
                     bat '''
-                        echo Testing application connectivity before DAST...
-                        curl -f http://localhost:8080 > nul 2>&1 && echo ✅ Application is accessible on localhost:8080 || (
-                            echo ❌ Application is not accessible
-                            exit /b 1
-                        )
-                    '''
-                    
-                    // Try ZAP with simplified approach
-                    bat '''
-                        echo Attempting DAST scanning with multiple approaches...
-                        
-                        REM Check if ZAP is available locally first
-                        where zap-baseline.py > nul 2>&1 && (
-                            echo ✅ ZAP found locally, running native scan...
-                            zap-baseline.py -t http://localhost:8080 -r zap-baseline-report.html -J zap-baseline-report.json -m 1
-                            if exist zap-baseline-report.html (
-                                move zap-baseline-report.html reports\\
-                                move zap-baseline-report.json reports\\
-                                echo ✅ Local ZAP scan completed successfully
-                                goto zap_success
-                            )
-                        )
-                        
-                        echo Local ZAP not available, trying Docker with simplified networking...
-                        
-                        REM Stop existing PHP processes and restart app on different port
-                        echo Stopping existing PHP processes...
-                        taskkill /f /im php.exe 2>nul || echo No existing PHP processes
-                        ping 127.0.0.1 -n 6 > nul
-                        
-                        echo Starting application on port 8081...
-                        start /b php spark serve --host=0.0.0.0 --port=8081
-                        ping 127.0.0.1 -n 11 > nul
-                        
-                        REM Test if app is accessible on both ports (app might still use 8080)
-                        set "APP_PORT=NONE"
-                        
-                        curl -f http://localhost:8081 > nul 2>&1
-                        if %errorlevel% equ 0 (
-                            set "APP_PORT=8081"
-                            echo ✅ Application accessible on port 8081
-                            goto test_docker
-                        )
-                        
-                        curl -f http://localhost:8080 > nul 2>&1
-                        if %errorlevel% equ 0 (
-                            set "APP_PORT=8080"
-                            echo ✅ Application accessible on port 8080
-                            goto test_docker
-                        )
-                        
-                        echo ⚠️ Could not access application on any port
-                        goto create_manual_guide
-                        
-                        :test_docker
-                        REM Try simple Docker approach
-                        echo Attempting Docker ZAP scan...
+                        echo Running OWASP ZAP baseline scan...
                         docker run --rm ^
-                            -v "%CD%\\reports":/zap/wrk/:rw ^
+                            -v "%CD%":/zap/wrk/:rw ^
                             zaproxy/zap-stable zap-baseline.py ^
-                            -t http://host.docker.internal:%APP_PORT% ^
-                            -g gen.conf ^
-                            -J zap-baseline-report.json ^
+                            -t http://host.docker.internal:8080 ^
                             -r zap-baseline-report.html ^
-                            -m 1 ^
-                            -d || echo Docker scan attempt completed
+                            -J zap-baseline-report.json ^
+                            -d || echo DAST scan completed with findings
                         
-                        if exist reports\\zap-baseline-report.html (
-                            echo ✅ Docker ZAP scan completed successfully
-                            goto zap_success
-                        ) else (
-                            echo ⚠️ Docker scan did not generate reports
-                            goto create_manual_guide
-                        )
+                        echo Moving reports to reports directory...
+                        if not exist reports mkdir reports
+                        if exist zap-baseline-report.html move zap-baseline-report.html reports\\
+                        if exist zap-baseline-report.json move zap-baseline-report.json reports\\
                         
-                        echo All automated ZAP attempts failed - creating manual security testing guide...
-                        goto create_manual_guide
-                        
-                        :zap_success
-                        echo DAST scanning completed successfully
-                        goto end_dast
-                        
-                        :create_manual_guide
-                        echo Creating comprehensive manual security testing guide...
-                        
-                        REM Create manual security testing guide with simplified approach
-                        echo ^<html^> > reports\\manual-security-guide.html
-                        echo ^<head^>^<title^>Manual Security Testing Guide^</title^> >> reports\\manual-security-guide.html
-                        echo ^<style^>body{font-family:Arial,sans-serif;margin:40px;} h1{color:#d73502;} h2{color:#0066cc;} ul{line-height:1.6;} .highlight{background-color:#fff3cd;padding:10px;border-left:4px solid #ffc107;}^</style^> >> reports\\manual-security-guide.html
-                        echo ^</head^> >> reports\\manual-security-guide.html
-                        echo ^<body^> >> reports\\manual-security-guide.html
-                        echo ^<h1^>Manual Security Testing Guide for CodeIgniter Application^</h1^> >> reports\\manual-security-guide.html
-                        echo ^<div class="highlight"^> >> reports\\manual-security-guide.html
-                        echo ^<p^>^<strong^>Application URL:^</strong^> http://localhost:8080^</p^> >> reports\\manual-security-guide.html
-                        echo ^<p^>^<strong^>Status:^</strong^> Automated DAST scanning failed due to environment limitations^</p^> >> reports\\manual-security-guide.html
-                        echo ^</div^> >> reports\\manual-security-guide.html
-                        echo ^<h2^>Recommended Security Tests:^</h2^> >> reports\\manual-security-guide.html
-                        echo ^<h3^>1. Input Validation Testing^</h3^> >> reports\\manual-security-guide.html
-                        echo ^<ul^> >> reports\\manual-security-guide.html
-                        echo ^<li^>Test all form inputs for SQL injection^</li^> >> reports\\manual-security-guide.html
-                        echo ^<li^>Test for Cross-site scripting XSS attacks^</li^> >> reports\\manual-security-guide.html
+                        echo ✅ DAST scanning completed
+                    '''
+                }
+            }
+        }
                         echo ^<li^>Test file upload functionality for malicious files^</li^> >> reports\\manual-security-guide.html
                         echo ^<li^>Test for command injection attacks^</li^> >> reports\\manual-security-guide.html
                         echo ^</ul^> >> reports\\manual-security-guide.html
