@@ -11,16 +11,18 @@ pipeline {
     environment {
         SONAR_TOKEN = credentials('sonarqube-token')
         // Define application URL for DAST testing
-        APP_URL = 'http://host.docker.internal:8080'
+        APP_URL = 'http://localhost:8080'
         // Docker configuration
         SONARQUBE_CONTAINER = 'sonarqube-container'
         ZAP_CONTAINER = 'zap-container'
         SONARQUBE_PORT = '9000'
-        ZAP_PORT = '8080'
+        ZAP_PORT = '8090'
         // Network for containers
         DOCKER_NETWORK = 'security-network'
         // PHP configuration
         PHP_PATH = 'php'
+        // CodeIgniter app port
+        CI_APP_PORT = '8080'
     }
 
     stages {
@@ -516,7 +518,7 @@ pipeline {
                 script {
                     echo 'Starting CodeIgniter application for DAST testing...'
                     bat '''
-                        echo Starting CodeIgniter development server...
+                        echo Starting CodeIgniter development server on port 8080...
                         start /b php spark serve --host=0.0.0.0 --port=8080
                         echo Waiting for application to start...
                         ping 127.0.0.1 -n 31 > nul
@@ -527,13 +529,9 @@ pipeline {
                             netstat -an | findstr :8080
                             exit /b 1
                         )
-                        echo ✅ CodeIgniter application is running successfully on localhost:8080
+                        echo ✅ CodeIgniter application is running successfully on port 8080
                         
-                        echo Testing basic connectivity...
-                        curl -f http://127.0.0.1:8080 > nul 2>&1 && echo ✅ 127.0.0.1:8080 accessible || echo ⚠️ 127.0.0.1:8080 not accessible
-                        
-                        echo Application is ready for DAST testing
-                        echo Main target: http://localhost:8080
+                        echo Application is ready for DAST testing at http://localhost:8080
                     '''
                 }
             }
