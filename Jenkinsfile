@@ -587,9 +587,9 @@ pipeline {
                                 docker exec ci4-app-dast php -v > app_php_info.txt 2>&1
                                 docker exec ci4-app-dast php -m > app_php_modules.txt 2>&1
                                 if not exist reports mkdir reports
-                                move app_container_logs.txt reports\ >nul 2>&1
-                                move app_php_info.txt reports\ >nul 2>&1
-                                move app_php_modules.txt reports\ >nul 2>&1
+                                move app_container_logs.txt reports\\ >nul 2>&1
+                                move app_php_info.txt reports\\ >nul 2>&1
+                                move app_php_modules.txt reports\\ >nul 2>&1
                                 echo Proceeding with ZAP attempt anyway
                             )
 
