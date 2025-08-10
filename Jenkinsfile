@@ -572,38 +572,42 @@ pipeline {
                         
                         echo Local ZAP not available, trying Docker with simplified networking...
                         
-                        REM Try with Docker but using a different approach - start app on all interfaces
-                        echo Starting temporary application on all network interfaces...
+                        REM Stop existing PHP processes and restart app on different port
+                        echo Stopping existing PHP processes...
                         taskkill /f /im php.exe 2>nul || echo No existing PHP processes
-                        timeout /t 5 > nul 2>&1
+                        ping 127.0.0.1 -n 6 > nul
+                        
+                        echo Starting application on port 8081...
                         start /b php spark serve --host=0.0.0.0 --port=8081
-                        timeout /t 10 > nul 2>&1
+                        ping 127.0.0.1 -n 11 > nul
                         
                         REM Test if app is accessible on the new port
                         curl -f http://localhost:8081 > nul 2>&1 && (
                             echo ✅ Application accessible on port 8081
                             
-                            REM Try ZAP with the new port and external access
+                            REM Try simple Docker approach
+                            echo Attempting Docker ZAP scan...
                             docker run --rm ^
-                                --network=bridge ^
                                 -v "%CD%\\reports":/zap/wrk/:rw ^
                                 zaproxy/zap-stable zap-baseline.py ^
-                                -t http://$(docker run --rm alpine/curl sh -c "ip route show default | awk '/default/ {print $3}"):8081 ^
+                                -t http://host.docker.internal:8081 ^
                                 -g gen.conf ^
                                 -J zap-baseline-report.json ^
                                 -r zap-baseline-report.html ^
                                 -m 1 ^
-                                -d
+                                -d || echo Docker scan attempt completed
                             
                             if exist reports\\zap-baseline-report.html (
                                 echo ✅ Docker ZAP scan completed successfully
                                 goto zap_success
+                            ) else (
+                                echo ⚠️ Docker scan did not generate reports
                             )
                         ) || (
                             echo ⚠️ Could not access application on port 8081
                         )
                         
-                        echo All ZAP attempts failed - creating manual security testing guide...
+                        echo All automated ZAP attempts failed - creating manual security testing guide...
                         goto create_manual_guide
                         
                         :zap_success
@@ -611,22 +615,50 @@ pipeline {
                         goto end_dast
                         
                         :create_manual_guide
-                        echo Creating manual security testing guide...
-                        echo ^<html^>^<head^>^<title^>Manual Security Testing Guide^</title^>^</head^> > reports\\manual-security-guide.html
-                        echo ^<body^>^<h1^>Manual Security Testing Required^</h1^> >> reports\\manual-security-guide.html
-                        echo ^<p^>Automated DAST scanning failed due to Docker networking limitations.^</p^> >> reports\\manual-security-guide.html
-                        echo ^<h2^>Recommended Manual Tests:^</h2^> >> reports\\manual-security-guide.html
-                        echo ^<ul^> >> reports\\manual-security-guide.html
-                        echo ^<li^>SQL Injection testing on form inputs^</li^> >> reports\\manual-security-guide.html
-                        echo ^<li^>Cross-site scripting (XSS) testing^</li^> >> reports\\manual-security-guide.html
-                        echo ^<li^>Authentication bypass attempts^</li^> >> reports\\manual-security-guide.html
-                        echo ^<li^>Authorization testing^</li^> >> reports\\manual-security-guide.html
-                        echo ^<li^>File upload security testing^</li^> >> reports\\manual-security-guide.html
-                        echo ^<li^>Session management testing^</li^> >> reports\\manual-security-guide.html
-                        echo ^</ul^> >> reports\\manual-security-guide.html
-                        echo ^<p^>Application URL: http://localhost:8080^</p^> >> reports\\manual-security-guide.html
-                        echo ^<p^>Use tools like OWASP ZAP desktop, Burp Suite, or manual testing.^</p^> >> reports\\manual-security-guide.html
-                        echo ^</body^>^</html^> >> reports\\manual-security-guide.html
+                        echo Creating comprehensive manual security testing guide...
+                        (
+                            echo ^<html^>
+                            echo ^<head^>^<title^>Manual Security Testing Guide^</title^>
+                            echo ^<style^>body{font-family:Arial,sans-serif;margin:40px;} h1{color:#d73502;} h2{color:#0066cc;} ul{line-height:1.6;} .highlight{background-color:#fff3cd;padding:10px;border-left:4px solid #ffc107;}^</style^>
+                            echo ^</head^>
+                            echo ^<body^>
+                            echo ^<h1^>Manual Security Testing Guide for CodeIgniter Application^</h1^>
+                            echo ^<div class="highlight"^>
+                            echo ^<p^>^<strong^>Application URL:^</strong^> http://localhost:8080^</p^>
+                            echo ^<p^>^<strong^>Status:^</strong^> Automated DAST scanning failed due to environment limitations^</p^>
+                            echo ^</div^>
+                            echo ^<h2^>Recommended Security Tests:^</h2^>
+                            echo ^<h3^>1. Input Validation Testing^</h3^>
+                            echo ^<ul^>
+                            echo ^<li^>Test all form inputs for SQL injection^</li^>
+                            echo ^<li^>Test for Cross-site scripting (XSS) in all input fields^</li^>
+                            echo ^<li^>Test file upload functionality for malicious files^</li^>
+                            echo ^<li^>Test for command injection in any system calls^</li^>
+                            echo ^</ul^>
+                            echo ^<h3^>2. Authentication ^&amp; Authorization^</h3^>
+                            echo ^<ul^>
+                            echo ^<li^>Test for weak password policies^</li^>
+                            echo ^<li^>Test for authentication bypass^</li^>
+                            echo ^<li^>Test for privilege escalation^</li^>
+                            echo ^<li^>Test session management and timeout^</li^>
+                            echo ^</ul^>
+                            echo ^<h3^>3. CodeIgniter Specific Tests^</h3^>
+                            echo ^<ul^>
+                            echo ^<li^>Check for exposed configuration files^</li^>
+                            echo ^<li^>Test CSRF protection implementation^</li^>
+                            echo ^<li^>Verify database security configuration^</li^>
+                            echo ^<li^>Test routing security and access controls^</li^>
+                            echo ^</ul^>
+                            echo ^<h2^>Recommended Tools:^</h2^>
+                            echo ^<ul^>
+                            echo ^<li^>OWASP ZAP Desktop Edition^</li^>
+                            echo ^<li^>Burp Suite Community Edition^</li^>
+                            echo ^<li^>SQLMap for SQL injection testing^</li^>
+                            echo ^<li^>Browser developer tools for manual testing^</li^>
+                            echo ^</ul^>
+                            echo ^</body^>
+                            echo ^</html^>
+                        ) > reports\\manual-security-guide.html
                         
                         echo ✅ Manual security testing guide created
                         
