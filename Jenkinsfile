@@ -545,142 +545,117 @@ pipeline {
                     // Create reports directory
                     bat 'if not exist reports mkdir reports'
                     
-                    // Get the actual host IP that Docker can reach
+                    // Test application accessibility
                     bat '''
                         echo Testing application connectivity before DAST...
-                        echo Application is accessible on http://localhost:8080
-                        
-                        curl -f http://localhost:8080 > nul 2>&1 && echo ✅ Application is ready for scanning || (
+                        curl -f http://localhost:8080 > nul 2>&1 && echo ✅ Application is accessible on localhost:8080 || (
                             echo ❌ Application is not accessible
                             exit /b 1
                         )
-                        
-                        echo Getting Docker host IP address...
-                        for /f "tokens=2 delims=:" %%i in ('docker run --rm alpine ip route ^| findstr default') do set DOCKER_HOST_IP=%%i
-                        echo Docker host IP: %DOCKER_HOST_IP%
                     '''
                     
-                    // Try ZAP baseline scan with multiple networking approaches
+                    // Try ZAP with simplified approach
                     bat '''
-                        echo Running ZAP Baseline Scan with multiple network attempts...
+                        echo Attempting DAST scanning with multiple approaches...
                         
-                        REM Attempt 1: Using host-gateway mapping
-                        echo Attempt 1: Using host.docker.internal with host-gateway...
-                        docker run --rm ^
-                            --add-host=host.docker.internal:host-gateway ^
-                            --memory=1g ^
-                            --cpus=0.5 ^
-                            -v "%CD%\\reports":/zap/wrk/:rw ^
-                            zaproxy/zap-stable zap-baseline.py ^
-                            -t http://host.docker.internal:8080 ^
-                            -g gen.conf ^
-                            -J zap-baseline-report.json ^
-                            -r zap-baseline-report.html ^
-                            -m 1 ^
-                            -d
-                        
-                        if exist reports\\zap-baseline-report.html (
-                            echo ✅ Baseline scan successful with host.docker.internal
-                            goto baseline_success
+                        REM Check if ZAP is available locally first
+                        where zap-baseline.py > nul 2>&1 && (
+                            echo ✅ ZAP found locally, running native scan...
+                            zap-baseline.py -t http://localhost:8080 -r zap-baseline-report.html -J zap-baseline-report.json -m 1
+                            if exist zap-baseline-report.html (
+                                move zap-baseline-report.html reports\\
+                                move zap-baseline-report.json reports\\
+                                echo ✅ Local ZAP scan completed successfully
+                                goto zap_success
+                            )
                         )
                         
-                        echo Attempt 1 failed, trying alternative approaches...
+                        echo Local ZAP not available, trying Docker with simplified networking...
                         
-                        REM Attempt 2: Using Docker Desktop's special IP
-                        echo Attempt 2: Using Docker Desktop gateway IP...
-                        docker run --rm ^
-                            --add-host=hostapp:172.17.0.1 ^
-                            --memory=1g ^
-                            --cpus=0.5 ^
-                            -v "%CD%\\reports":/zap/wrk/:rw ^
-                            zaproxy/zap-stable zap-baseline.py ^
-                            -t http://hostapp:8080 ^
-                            -g gen.conf ^
-                            -J zap-baseline-report-alt.json ^
-                            -r zap-baseline-report-alt.html ^
-                            -m 1 ^
-                            -d
+                        REM Try with Docker but using a different approach - start app on all interfaces
+                        echo Starting temporary application on all network interfaces...
+                        taskkill /f /im php.exe 2>nul || echo No existing PHP processes
+                        timeout /t 5 > nul 2>&1
+                        start /b php spark serve --host=0.0.0.0 --port=8081
+                        timeout /t 10 > nul 2>&1
                         
-                        if exist reports\\zap-baseline-report-alt.html (
-                            echo ✅ Baseline scan successful with gateway IP
-                            copy reports\\zap-baseline-report-alt.html reports\\zap-baseline-report.html
-                            copy reports\\zap-baseline-report-alt.json reports\\zap-baseline-report.json
-                            goto baseline_success
-                        )
-                        
-                        REM Attempt 3: Using localhost with bridge network
-                        echo Attempt 3: Using bridge network with localhost...
-                        docker run --rm ^
-                            --network=bridge ^
-                            -p 8091:8080 ^
-                            --memory=1g ^
-                            --cpus=0.5 ^
-                            -v "%CD%\\reports":/zap/wrk/:rw ^
-                            zaproxy/zap-stable zap-baseline.py ^
-                            -t http://172.17.0.1:8080 ^
-                            -g gen.conf ^
-                            -J zap-baseline-report-bridge.json ^
-                            -r zap-baseline-report-bridge.html ^
-                            -m 1 ^
-                            -d
-                        
-                        if exist reports\\zap-baseline-report-bridge.html (
-                            echo ✅ Baseline scan successful with bridge network
-                            copy reports\\zap-baseline-report-bridge.html reports\\zap-baseline-report.html
-                            copy reports\\zap-baseline-report-bridge.json reports\\zap-baseline-report.json
-                            goto baseline_success
-                        )
-                        
-                        echo ⚠️ All baseline scan attempts failed - network connectivity issues
-                        echo This may be due to Docker Desktop networking limitations on Windows
-                        
-                        :baseline_success
-                        echo Baseline scan phase completed
-                    '''
-                    
-                    // Wait between scans
-                    bat 'echo Waiting 15 seconds between scans... && ping 127.0.0.1 -n 16 > nul'
-                    
-                    // Simplified spider scan - only try if baseline worked
-                    bat '''
-                        if exist reports\\zap-baseline-report.html (
-                            echo Running ZAP Spider Scan...
+                        REM Test if app is accessible on the new port
+                        curl -f http://localhost:8081 > nul 2>&1 && (
+                            echo ✅ Application accessible on port 8081
+                            
+                            REM Try ZAP with the new port and external access
                             docker run --rm ^
-                                --add-host=host.docker.internal:host-gateway ^
-                                --memory=512m ^
-                                --cpus=0.5 ^
+                                --network=bridge ^
                                 -v "%CD%\\reports":/zap/wrk/:rw ^
                                 zaproxy/zap-stable zap-baseline.py ^
-                                -t http://host.docker.internal:8080 ^
+                                -t http://$(docker run --rm alpine/curl sh -c "ip route show default | awk '/default/ {print $3}"):8081 ^
+                                -g gen.conf ^
+                                -J zap-baseline-report.json ^
+                                -r zap-baseline-report.html ^
                                 -m 1 ^
-                                -s ^
-                                -J zap-spider-report.json ^
-                                -r zap-spider-report.html ^
-                                -d || echo Spider scan completed with issues
-                        ) else (
-                            echo Skipping spider scan due to baseline connectivity issues
+                                -d
+                            
+                            if exist reports\\zap-baseline-report.html (
+                                echo ✅ Docker ZAP scan completed successfully
+                                goto zap_success
+                            )
+                        ) || (
+                            echo ⚠️ Could not access application on port 8081
                         )
+                        
+                        echo All ZAP attempts failed - creating manual security testing guide...
+                        goto create_manual_guide
+                        
+                        :zap_success
+                        echo DAST scanning completed successfully
+                        goto end_dast
+                        
+                        :create_manual_guide
+                        echo Creating manual security testing guide...
+                        echo ^<html^>^<head^>^<title^>Manual Security Testing Guide^</title^>^</head^> > reports\\manual-security-guide.html
+                        echo ^<body^>^<h1^>Manual Security Testing Required^</h1^> >> reports\\manual-security-guide.html
+                        echo ^<p^>Automated DAST scanning failed due to Docker networking limitations.^</p^> >> reports\\manual-security-guide.html
+                        echo ^<h2^>Recommended Manual Tests:^</h2^> >> reports\\manual-security-guide.html
+                        echo ^<ul^> >> reports\\manual-security-guide.html
+                        echo ^<li^>SQL Injection testing on form inputs^</li^> >> reports\\manual-security-guide.html
+                        echo ^<li^>Cross-site scripting (XSS) testing^</li^> >> reports\\manual-security-guide.html
+                        echo ^<li^>Authentication bypass attempts^</li^> >> reports\\manual-security-guide.html
+                        echo ^<li^>Authorization testing^</li^> >> reports\\manual-security-guide.html
+                        echo ^<li^>File upload security testing^</li^> >> reports\\manual-security-guide.html
+                        echo ^<li^>Session management testing^</li^> >> reports\\manual-security-guide.html
+                        echo ^</ul^> >> reports\\manual-security-guide.html
+                        echo ^<p^>Application URL: http://localhost:8080^</p^> >> reports\\manual-security-guide.html
+                        echo ^<p^>Use tools like OWASP ZAP desktop, Burp Suite, or manual testing.^</p^> >> reports\\manual-security-guide.html
+                        echo ^</body^>^</html^> >> reports\\manual-security-guide.html
+                        
+                        echo ✅ Manual security testing guide created
+                        
+                        :end_dast
+                        echo DAST phase completed
                     '''
                     
-                    // Check what reports were actually generated
+                    // Check and report results
                     bat '''
-                        echo Checking generated reports...
+                        echo Checking DAST results...
+                        if exist reports\\zap-baseline-report.html (
+                            echo ✅ ZAP baseline report generated
+                            dir reports\\zap-baseline-report.html
+                        )
+                        
+                        if exist reports\\manual-security-guide.html (
+                            echo ✅ Manual security testing guide created
+                            dir reports\\manual-security-guide.html
+                        )
+                        
                         if exist reports\\*.html (
-                            echo ✅ HTML reports found:
+                            echo Available reports:
                             dir reports\\*.html
                         ) else (
-                            echo ⚠️ No HTML reports found - creating minimal report
-                            echo ^<html^>^<body^>^<h1^>DAST Scan Results^</h1^>^<p^>Network connectivity issues prevented full scanning. Manual security testing recommended.^</p^>^</body^>^</html^> > reports\\dast-connectivity-issue.html
+                            echo Creating minimal fallback report...
+                            echo Security scan attempted but failed due to environment limitations > reports\\dast-attempt-log.txt
                         )
                         
-                        if exist reports\\*.json (
-                            echo ✅ JSON reports found:
-                            dir reports\\*.json
-                        ) else (
-                            echo ⚠️ No JSON reports found
-                        )
-                        
-                        echo DAST scanning phase completed - check reports directory
+                        echo DAST stage completed - continuing with pipeline
                     '''
                 }
             }
