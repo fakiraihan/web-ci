@@ -11,7 +11,7 @@ pipeline {
     environment {
         SONAR_TOKEN = credentials('sonarqube-token')
         // Define application URL for DAST testing
-        APP_URL = 'http://host.docker.internal:8080'
+        APP_URL = 'http://host.docker.internal:8070'
         // Docker configuration
         SONARQUBE_CONTAINER = 'sonarqube-container'
         ZAP_CONTAINER = 'zap-container'
@@ -516,18 +516,53 @@ pipeline {
                 script {
                     echo 'Starting CodeIgniter application for DAST testing...'
                     bat '''
+                        echo Checking if port 8070 is already in use...
+                        netstat -an | findstr :8070 && (
+                            echo Port 8070 is in use, killing existing processes...
+                            for /f "tokens=5" %%a in ('netstat -aon ^| findstr :8070') do taskkill /f /pid %%a 2>nul
+                            timeout /t 5
+                        ) || echo Port 8070 is available
+                        
                         echo Starting CodeIgniter development server...
-                        start /b php spark serve --host=0.0.0.0 --port=8080
+                        start /b php spark serve --host=0.0.0.0 --port=8070
+                        
                         echo Waiting for application to start...
-                        timeout /t 30
-                        echo Testing application availability...
-                        curl -f http://localhost:8080 || (
-                            echo Application failed to start
-                            echo Checking if port 8080 is in use...
-                            netstat -an | findstr :8080
+                        timeout /t 15
+                        
+                        echo Testing application availability with multiple attempts...
+                        set /a count=0
+                        :test_app
+                        set /a count+=1
+                        if %count% GTR 10 (
+                            echo Application failed to start after 10 attempts
+                            echo Checking running processes...
+                            tasklist | findstr php
+                            echo Checking port usage...
+                            netstat -an | findstr :8070
                             exit /b 1
                         )
-                        echo CodeIgniter application is running successfully
+                        
+                        echo Testing application... attempt %count%/10
+                        curl -f -s -m 10 http://localhost:8070 > app_test.html 2>nul
+                        if %errorlevel% equ 0 (
+                            echo ✅ Application is responding successfully
+                            echo Response preview:
+                            type app_test.html | head -n 5
+                            goto app_ready
+                        )
+                        
+                        echo Application not ready yet, waiting 5 seconds...
+                        timeout /t 5
+                        goto test_app
+                        
+                        :app_ready
+                        echo ✅ CodeIgniter application is running successfully on port 8070
+                        
+                        echo Testing application endpoints...
+                        curl -s -m 5 http://localhost:8070/ > homepage.html 2>nul || echo Homepage test failed
+                        curl -s -m 5 http://localhost:8070/index.php > index_test.html 2>nul || echo Index test failed
+                        
+                        echo Application is ready for DAST testing
                     '''
                 }
             }
@@ -549,7 +584,7 @@ pipeline {
                             --cpus=0.5 ^
                             -v "%CD%\\reports":/zap/wrk/:rw ^
                             zaproxy/zap-stable zap-baseline.py ^
-                            -t http://host.docker.internal:8080 ^
+                            -t http://host.docker.internal:8070 ^
                             -g gen.conf ^
                             -J zap-baseline-report.json ^
                             -r zap-baseline-report.html ^
@@ -568,7 +603,7 @@ pipeline {
                             --cpus=0.5 ^
                             -v "%CD%\\reports":/zap/wrk/:rw ^
                             zaproxy/zap-stable zap-baseline.py ^
-                            -t http://host.docker.internal:8080 ^
+                            -t http://host.docker.internal:8070 ^
                             -m 1 ^
                             -s ^
                             -J zap-spider-report.json ^
@@ -584,7 +619,7 @@ pipeline {
                             --cpus=0.5 ^
                             -v "%CD%\\reports":/zap/wrk/:rw ^
                             zaproxy/zap-stable zap-full-scan.py ^
-                            -t http://host.docker.internal:8080 ^
+                            -t http://host.docker.internal:8070 ^
                             -g gen.conf ^
                             -J zap-full-report.json ^
                             -r zap-full-report.html ^
@@ -693,7 +728,7 @@ pipeline {
                 
                 // Stop CodeIgniter application
                 bat '''
-                    for /f "tokens=5" %%a in ('netstat -aon ^| findstr :8080') do taskkill /f /pid %%a 2>nul
+                    for /f "tokens=5" %%a in ('netstat -aon ^| findstr :8070') do taskkill /f /pid %%a 2>nul
                 '''
                 
                 // Stop and remove Docker containers (optional - commented out to preserve data)
