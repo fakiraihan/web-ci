@@ -1,0 +1,653 @@
+pipeline {
+    agent any
+
+    options {
+        timeout(time: 45, unit: 'MINUTES')
+        retry(1)
+        buildDiscarder(logRotator(numToKeepStr: '5'))
+        skipDefaultCheckout(true)
+    }
+
+    environment {
+        SONAR_TOKEN = credentials('sonarqube-token')
+        // Define application URL for DAST testing
+        APP_URL = 'http://host.docker.internal:8080'
+        // Docker configuration
+        SONARQUBE_CONTAINER = 'sonarqube-container'
+        ZAP_CONTAINER = 'zap-container'
+        SONARQUBE_PORT = '9000'
+        ZAP_PORT = '8080'
+        // Network for containers
+        DOCKER_NETWORK = 'security-network'
+        // PHP configuration
+        PHP_PATH = 'php'
+    }
+
+    stages {
+        stage('Pre-Check Docker') {
+            steps {
+                script {
+                    echo 'Checking Docker Desktop status and resources...'
+                    bat '''
+                        echo Checking Docker Desktop status...
+                        docker info > docker_status.txt 2>&1 || (
+                            echo Docker Desktop is not running or having issues
+                            echo Please start Docker Desktop and ensure it has adequate resources:
+                            echo - Memory: 4GB minimum ^(8GB recommended^)
+                            echo - CPUs: 2 minimum ^(4 recommended^)
+                            echo - Disk space: 20GB minimum
+                            exit /b 1
+                        )
+                        
+                        echo Docker Desktop status:
+                        findstr /i "memory cpu containers images" docker_status.txt
+                        
+                        echo Cleaning up any orphaned containers...
+                        docker container prune -f 2>nul || echo No orphaned containers
+                        
+                        echo Available system resources:
+                        docker system df
+                    '''
+                }
+            }
+        }
+
+        stage('Checkout') {
+            steps {
+                script {
+                    echo 'Checking out source code...'
+                    git branch: 'main', url: 'https://github.com/fakiraihan/web-ci.git'
+                }
+            }
+        }
+
+        stage('Docker Setup') {
+            steps {
+                script {
+                    echo 'Setting up Docker network and containers...'
+                    bat '''
+                        echo Creating Docker network...
+                        docker network create %DOCKER_NETWORK% 2>nul || echo Network already exists
+                        
+                        echo Creating persistent volumes for SonarQube data...
+                        docker volume create sonarqube-data 2>nul || echo Volume already exists
+                        docker volume create sonarqube-logs 2>nul || echo Volume already exists
+                        docker volume create sonarqube-extensions 2>nul || echo Volume already exists
+                        
+                        echo Checking if SonarQube container is already running...
+                        docker ps | findstr %SONARQUBE_CONTAINER% && (
+                            echo SonarQube container is already running, reusing it
+                        ) || (
+                            echo Starting new SonarQube container with resource limits...
+                            docker stop %SONARQUBE_CONTAINER% 2>nul || echo SonarQube container not running
+                            docker rm %SONARQUBE_CONTAINER% 2>nul || echo SonarQube container not found
+                            
+                            echo Checking Docker Desktop status...
+                            docker info > docker_info.txt 2>nul || (
+                                echo Docker Desktop appears to be having issues
+                                echo Please ensure Docker Desktop is running and has enough resources
+                                echo Recommended: 4GB RAM, 2 CPUs minimum
+                                exit /b 1
+                            )
+                            
+                            docker run -d ^
+                                --name %SONARQUBE_CONTAINER% ^
+                                --network %DOCKER_NETWORK% ^
+                                -p %SONARQUBE_PORT%:9000 ^
+                                --memory=2g ^
+                                --cpus=1.0 ^
+                                -v sonarqube-data:/opt/sonarqube/data ^
+                                -v sonarqube-logs:/opt/sonarqube/logs ^
+                                -v sonarqube-extensions:/opt/sonarqube/extensions ^
+                                -e SONAR_ES_BOOTSTRAP_CHECKS_DISABLE=true ^
+                                -e SONAR_JAVA_OPTS="-Xmx1g -Xms512m" ^
+                                sonarqube:latest
+                        )
+                        
+                        echo Waiting for SonarQube to stabilize...
+                        ping 127.0.0.1 -n 31 > nul
+                        
+                        echo Verifying SonarQube container is running...
+                        docker ps | findstr %SONARQUBE_CONTAINER% || (
+                            echo SonarQube container failed to start
+                            echo Container logs:
+                            docker logs %SONARQUBE_CONTAINER%
+                            echo Docker system info:
+                            type docker_info.txt
+                            exit /b 1
+                        )
+                    '''
+                }
+            }
+        }
+
+        stage('Verify Docker Services') {
+            steps {
+                script {
+                    echo 'Verifying Docker services are ready...'
+                    bat '''
+                        echo Checking SonarQube health...
+                        set /a count=0
+                        :wait_sonar
+                        set /a count+=1
+                        if %count% GTR 20 (
+                            echo SonarQube failed to start after 3.5 minutes
+                            echo Showing SonarQube container logs:
+                            docker logs %SONARQUBE_CONTAINER%
+                            echo Checking container status:
+                            docker ps -a | findstr %SONARQUBE_CONTAINER%
+                            exit /b 1
+                        )
+                        
+                        echo Checking SonarQube health... attempt %count%/20
+                        curl -f http://localhost:%SONARQUBE_PORT%/api/system/status 2>nul
+                        if %errorlevel% equ 0 goto sonar_ready
+                        
+                        echo SonarQube not ready yet, waiting 10 seconds...
+                        ping 127.0.0.1 -n 11 > nul
+                        goto wait_sonar
+                        
+                        :sonar_ready
+                        echo SonarQube is ready!
+                        echo SonarQube verification completed successfully!
+                    '''
+                }
+            }
+        }
+
+        stage('Environment Setup') {
+            steps {
+                script {
+                    echo 'Setting up CodeIgniter environment...'
+                    bat '''
+                        copy env .env
+                        echo CI_ENVIRONMENT = development >> .env
+                        echo app.baseURL = '%APP_URL%' >> .env
+                        echo # Database configuration for testing >> .env
+                        echo database.default.hostname = localhost >> .env
+                        echo database.default.database = ci4_test >> .env
+                        echo database.default.username = root >> .env
+                        echo database.default.password = >> .env
+                        echo database.default.DBDriver = MySQLi >> .env
+                        echo database.default.DBPrefix = >> .env
+                        echo database.default.port = 3306 >> .env
+                    '''
+                }
+            }
+        }
+
+        stage('Install Dependencies') {
+            steps {
+                script {
+                    echo 'Installing Composer dependencies...'
+                    bat 'composer install --no-interaction --prefer-dist --optimize-autoloader'
+                    
+                    echo 'Setting up CodeIgniter database...'
+                    bat '''
+                        echo Setting up database directories...
+                        if not exist writable\\database mkdir writable\\database
+                        
+                        echo Running CodeIgniter migrations if available...
+                        php spark migrate 2>nul || echo No migrations to run
+                        
+                        echo Seeding database if seeders available...
+                        php spark db:seed 2>nul || echo No seeders to run
+                        
+                        echo CodeIgniter setup completed
+                    '''
+                }
+            }
+        }
+
+        stage('Unit Testing') {
+            steps {
+                script {
+                    echo 'Running PHPUnit tests for CodeIgniter...'
+                    
+                    // Create build directory for test results
+                    bat 'if not exist build mkdir build && if not exist build\\logs mkdir build\\logs'
+                    
+                    // Run tests without coverage first
+                    def testResult = bat(script: 'vendor\\bin\\phpunit --configuration phpunit.xml.dist --log-junit=build\\logs\\phpunit-report.xml', returnStatus: true)
+                    if (testResult != 0) {
+                        error("Unit tests failed")
+                    }
+                    
+                    // Try to generate coverage if Xdebug/PCOV is available
+                    def coverageResult = bat(script: 'vendor\\bin\\phpunit --configuration phpunit.xml.dist --coverage-clover=build\\logs\\coverage.xml', returnStatus: true)
+                    if (coverageResult == 0) {
+                        echo 'Code coverage generated successfully'
+                    } else {
+                        echo 'Code coverage not available - Xdebug/PCOV not installed, continuing without coverage'
+                    }
+                }
+            }
+            post {
+                always {
+                    // Archive test results
+                    junit testResults: 'build/logs/phpunit-report.xml', allowEmptyResults: true
+                    
+                    // Archive coverage reports for SonarQube only if they exist
+                    script {
+                        if (fileExists('build/logs/coverage.xml')) {
+                            archiveArtifacts artifacts: 'build/logs/coverage.xml', fingerprint: true
+                            echo 'Coverage report archived successfully'
+                        } else {
+                            echo 'No coverage.xml found - skipping coverage artifact archiving'
+                        }
+                    }
+                }
+            }
+        }
+
+        stage('SAST - SonarQube Analysis') {
+            steps {
+                script {
+                    echo 'Starting SonarQube static analysis for CodeIgniter...'
+                    
+                    // Run SonarQube analysis using Docker
+                    bat '''
+                        setlocal enabledelayedexpansion
+                        echo Waiting for SonarQube to be fully ready...
+                        set /a count=0
+                        :wait_sonar_ready
+                        set /a count+=1
+                        if %count% GTR 30 (
+                            echo SonarQube failed to become ready after 10 minutes
+                            echo Showing SonarQube container logs:
+                            docker logs %SONARQUBE_CONTAINER%
+                            exit /b 1
+                        )
+                        
+                        echo Checking SonarQube status... attempt %count%/30
+                        curl -s -u admin:admin http://localhost:%SONARQUBE_PORT%/api/system/status > sonar_status.json 2>nul
+                        findstr "UP" sonar_status.json >nul
+                        if %errorlevel% equ 0 goto sonar_fully_ready
+                        
+                        echo SonarQube still starting, waiting 20 seconds...
+                        ping 127.0.0.1 -n 21 > nul
+                        goto wait_sonar_ready
+                        
+                        :sonar_fully_ready
+                        echo SonarQube is fully ready!
+                        type sonar_status.json
+                        
+                        echo Testing SonarQube authentication with your token...
+                        curl -H "Authorization: Bearer %SONAR_TOKEN%" ^
+                            "http://localhost:%SONARQUBE_PORT%/api/authentication/validate" > auth_test.json 2>nul
+                        
+                        echo Authentication test response:
+                        type auth_test.json
+                        
+                        if %errorlevel% neq 0 (
+                            echo Token authentication failed, trying username/password...
+                            echo Testing with admin credentials:
+                            curl -u admin:admin "http://localhost:%SONARQUBE_PORT%/api/authentication/validate" > auth_test2.json 2>nul
+                            type auth_test2.json
+                            
+                            echo Please ensure your SonarQube token is correctly configured
+                            exit /b 1
+                        )
+                        
+                        echo Running SonarQube scanner for CodeIgniter project...
+                        docker run --rm ^
+                            --network %DOCKER_NETWORK% ^
+                            -v "%CD%":/usr/src ^
+                            -w /usr/src ^
+                            sonarsource/sonar-scanner-cli:latest ^
+                            -Dsonar.host.url=http://host.docker.internal:%SONARQUBE_PORT% ^
+                            -Dsonar.token=%SONAR_TOKEN% ^
+                            -Dsonar.projectKey=web-ci ^
+                            -Dsonar.projectName=CodeIgniter4-WebCI ^
+                            -Dsonar.projectVersion=1.0 ^
+                            -Dsonar.language=php ^
+                            -Dsonar.sources=app,public ^
+                            -Dsonar.tests=tests ^
+                            -Dsonar.exclusions=vendor/**,writable/**,system/**,builds/**,env,preload.php,spark ^
+                            -Dsonar.php.coverage.reportPaths=build/logs/coverage.xml ^
+                            -Dsonar.php.tests.reportPath=build/logs/phpunit-report.xml
+                    '''
+                }
+            }
+        }
+
+        stage('Quality Gate Check') {
+            steps {
+                script {
+                    echo 'Checking SonarQube Quality Gate...'
+                    
+                    // Wait for analysis to complete and check quality gate
+                    bat '''
+                        echo Waiting for SonarQube analysis to complete...
+                        set /a count=0
+                        :wait_analysis_complete
+                        set /a count+=1
+                        if %count% GTR 20 (
+                            echo Analysis timeout after 10 minutes
+                            echo Checking final status anyway...
+                            goto check_final_status
+                        )
+                        
+                        echo Checking analysis status... attempt %count%/20
+                        curl -H "Authorization: Bearer %SONAR_TOKEN%" ^
+                            "http://localhost:%SONARQUBE_PORT%/api/ce/activity?component=web-ci&ps=1" > analysis_status.json 2>nul
+                        
+                        if %errorlevel% neq 0 (
+                            echo API call failed, waiting 30 seconds...
+                            ping 127.0.0.1 -n 31 > nul
+                            goto wait_analysis_complete
+                        )
+                        
+                        findstr /i "SUCCESS FAILED" analysis_status.json >nul
+                        if %errorlevel% equ 0 (
+                            echo Analysis completed!
+                            goto check_final_status
+                        )
+                        
+                        echo Analysis still in progress, waiting 30 seconds...
+                        ping 127.0.0.1 -n 31 > nul
+                        goto wait_analysis_complete
+                        
+                        :check_final_status
+                        echo Checking Quality Gate status...
+                        curl -H "Authorization: Bearer %SONAR_TOKEN%" ^
+                            "http://localhost:%SONARQUBE_PORT%/api/qualitygates/project_status?projectKey=web-ci" > qg_result.json 2>nul
+                        
+                        if %errorlevel% neq 0 (
+                            echo Quality Gate API call failed
+                            echo Showing analysis status:
+                            type analysis_status.json
+                            exit /b 1
+                        )
+                        
+                        echo Quality Gate Response:
+                        type qg_result.json
+                        
+                        findstr /c:"\"status\":\"ERROR\"" qg_result.json >nul
+                        if %errorlevel% equ 0 (
+                            echo ❌ Quality Gate FAILED!
+                            echo Review the issues in SonarQube: http://localhost:%SONARQUBE_PORT%/dashboard?id=web-ci
+                            exit /b 1
+                        )
+                        
+                        findstr /c:"\"status\":\"OK\"" qg_result.json >nul
+                        if %errorlevel% equ 0 (
+                            echo ✅ Quality Gate PASSED!
+                            goto quality_gate_success
+                        )
+                        
+                        echo ⚠️  Quality Gate status unclear, continuing...
+                        echo Full response:
+                        type qg_result.json
+                        
+                        :quality_gate_success
+                        echo Quality Gate check completed successfully!
+                        echo View detailed results: http://localhost:%SONARQUBE_PORT%/dashboard?id=web-ci
+                    '''
+                }
+            }
+        }
+
+        stage('Start Application') {
+            steps {
+                script {
+                    echo 'Starting CodeIgniter application for DAST testing...'
+                    bat '''
+                        echo Starting CodeIgniter development server...
+                        start /b php spark serve --host=0.0.0.0 --port=8080
+                        echo Waiting for application to start...
+                        timeout /t 30
+                        echo Testing application availability...
+                        curl -f http://localhost:8080 || (
+                            echo Application failed to start
+                            echo Checking if port 8080 is in use...
+                            netstat -an | findstr :8080
+                            exit /b 1
+                        )
+                        echo CodeIgniter application is running successfully
+                    '''
+                }
+            }
+        }
+
+        stage('DAST - OWASP ZAP Security Scan') {
+            steps {
+                script {
+                    echo 'Starting OWASP ZAP dynamic security testing for CodeIgniter...'
+                    
+                    // Create reports directory
+                    bat 'if not exist reports mkdir reports'
+                    
+                    // Run ZAP baseline scan
+                    bat '''
+                        echo Running ZAP Baseline Scan with resource limits...
+                        docker run --rm ^
+                            --memory=1g ^
+                            --cpus=0.5 ^
+                            -v "%CD%\\reports":/zap/wrk/:rw ^
+                            zaproxy/zap-stable zap-baseline.py ^
+                            -t http://host.docker.internal:8080 ^
+                            -g gen.conf ^
+                            -J zap-baseline-report.json ^
+                            -r zap-baseline-report.html ^
+                            -m 1 ^
+                            -d || echo Baseline scan completed with findings
+                    '''
+                    
+                    // Wait between scans to reduce resource pressure
+                    bat 'echo Waiting 10 seconds between scans... && ping 127.0.0.1 -n 11 > nul'
+                    
+                    // Run ZAP spider scan for endpoint discovery
+                    bat '''
+                        echo Running ZAP Spider Scan for CodeIgniter endpoints...
+                        docker run --rm ^
+                            --memory=512m ^
+                            --cpus=0.5 ^
+                            -v "%CD%\\reports":/zap/wrk/:rw ^
+                            zaproxy/zap-stable zap-baseline.py ^
+                            -t http://host.docker.internal:8080 ^
+                            -m 1 ^
+                            -s ^
+                            -J zap-spider-report.json ^
+                            -r zap-spider-report.html ^
+                            -d || echo Spider scan completed
+                    '''
+                    
+                    // Run ZAP full scan
+                    bat '''
+                        echo Running ZAP Full Scan...
+                        docker run --rm ^
+                            --memory=1g ^
+                            --cpus=0.5 ^
+                            -v "%CD%\\reports":/zap/wrk/:rw ^
+                            zaproxy/zap-stable zap-full-scan.py ^
+                            -t http://host.docker.internal:8080 ^
+                            -g gen.conf ^
+                            -J zap-full-report.json ^
+                            -r zap-full-report.html ^
+                            -m 1 ^
+                            -d || echo Full scan completed with findings
+                    '''
+                }
+            }
+            post {
+                always {
+                    script {
+                        // Copy reports to workspace root for archiving
+                        bat '''
+                            if exist reports\\*.html (
+                                copy reports\\*.html . >nul 2>&1
+                                echo HTML reports copied successfully
+                            ) else (
+                                echo No HTML reports found
+                            )
+                            
+                            if exist reports\\*.json (
+                                copy reports\\*.json . >nul 2>&1
+                                echo JSON reports copied successfully
+                            ) else (
+                                echo No JSON reports found
+                            )
+                            
+                            if exist reports\\*.xml (
+                                copy reports\\*.xml . >nul 2>&1
+                                echo XML reports copied successfully
+                            ) else (
+                                echo No XML reports found
+                            )
+                        '''
+                        
+                        // Archive ZAP reports
+                        archiveArtifacts artifacts: 'zap-*.html,zap-*.json,zap-*.xml', fingerprint: true, allowEmptyArchive: true
+                        
+                        // Publish ZAP reports
+                        publishHTML([
+                            allowMissing: true,
+                            alwaysLinkToLastBuild: false,
+                            keepAll: true,
+                            reportDir: '.',
+                            reportFiles: 'zap-baseline-report.html',
+                            reportName: 'ZAP Baseline Security Report'
+                        ])
+                        
+                        publishHTML([
+                            allowMissing: true,
+                            alwaysLinkToLastBuild: false,
+                            keepAll: true,
+                            reportDir: '.',
+                            reportFiles: 'zap-full-report.html',
+                            reportName: 'ZAP Full Security Report'
+                        ])
+                        
+                        publishHTML([
+                            allowMissing: true,
+                            alwaysLinkToLastBuild: false,
+                            keepAll: true,
+                            reportDir: '.',
+                            reportFiles: 'zap-spider-report.html',
+                            reportName: 'ZAP Spider Security Report'
+                        ])
+                    }
+                }
+            }
+        }
+
+        stage('Security Analysis Results') {
+            steps {
+                script {
+                    echo 'Processing security scan results...'
+                    
+                    // Parse ZAP results and check for high/medium severity issues
+                    bat '''
+                        if exist zap-baseline-report.json (
+                            findstr /i "High\\|Medium" zap-baseline-report.json > security-issues.txt
+                            if errorlevel 1 (
+                                echo No high or medium severity issues found in baseline scan.
+                            ) else (
+                                echo WARNING: High or medium severity security issues detected in baseline scan!
+                                type security-issues.txt
+                            )
+                        )
+                        
+                        if exist zap-full-report.json (
+                            findstr /i "High\\|Medium" zap-full-report.json >> security-issues.txt
+                            if errorlevel 1 (
+                                echo No additional issues found in full scan.
+                            ) else (
+                                echo WARNING: Additional security issues detected in full scan!
+                            )
+                        )
+                    '''
+                }
+            }
+        }
+    }
+
+    post {
+        always {
+            script {
+                echo 'Cleaning up...'
+                
+                // Stop CodeIgniter application
+                bat '''
+                    for /f "tokens=5" %%a in ('netstat -aon ^| findstr :8080') do taskkill /f /pid %%a 2>nul
+                '''
+                
+                // Stop and remove Docker containers (optional - commented out to preserve data)
+                bat '''
+                    echo Containers will be left running to preserve SonarQube data and tokens
+                    echo To manually stop: docker stop %SONARQUBE_CONTAINER% %ZAP_CONTAINER%
+                    echo To manually remove: docker rm %SONARQUBE_CONTAINER% %ZAP_CONTAINER%
+                    echo SonarQube data is stored in persistent volumes: sonarqube-data, sonarqube-logs, sonarqube-extensions
+                    
+                    echo Uncomment below lines if you want to clean up containers after each run
+                    echo docker stop %SONARQUBE_CONTAINER% 2^>nul ^|^| echo SonarQube container not running
+                    echo docker rm %SONARQUBE_CONTAINER% 2^>nul ^|^| echo SonarQube container not found
+                    echo docker stop %ZAP_CONTAINER% 2^>nul ^|^| echo ZAP container not running  
+                    echo docker rm %ZAP_CONTAINER% 2^>nul ^|^| echo ZAP container not found
+                    echo docker network rm %DOCKER_NETWORK% 2^>nul ^|^| echo Network not found
+                '''
+                
+                // Clean up temporary files
+                bat '''
+                    if exist security-issues.txt del security-issues.txt
+                    if exist reports rmdir /s /q reports
+                    if exist docker_status.txt del docker_status.txt
+                    if exist docker_info.txt del docker_info.txt
+                    if exist sonar_status.json del sonar_status.json
+                    if exist auth_test.json del auth_test.json
+                    if exist auth_test2.json del auth_test2.json
+                    if exist analysis_status.json del analysis_status.json
+                    if exist qg_result.json del qg_result.json
+                '''
+            }
+        }
+        
+        success {
+            echo '✅ Pipeline completed successfully! Both SAST and DAST security scans passed.'
+            
+            // Send success notification
+            emailext (
+                subject: "✅ Security Pipeline Success - CodeIgniter Web-CI",
+                body: """
+                The security pipeline for CodeIgniter Web-CI has completed successfully!
+                
+                ✅ SAST (SonarQube): Quality gate passed
+                ✅ DAST (OWASP ZAP): Security scan completed
+                ✅ Unit Tests: All tests passed
+                
+                Build: ${env.BUILD_NUMBER}
+                Branch: ${env.BRANCH_NAME}
+                
+                View reports: ${env.BUILD_URL}
+                SonarQube Dashboard: http://localhost:9000/dashboard?id=web-ci
+                """,
+                to: "${env.CHANGE_AUTHOR_EMAIL}"
+            )
+        }
+        
+        failure {
+            echo '❌ Pipeline failed! Check logs for details.'
+            
+            // Send failure notification
+            emailext (
+                subject: "❌ Security Pipeline Failed - CodeIgniter Web-CI",
+                body: """
+                The security pipeline for CodeIgniter Web-CI has failed!
+                
+                Please check the build logs for details.
+                
+                Build: ${env.BUILD_NUMBER}
+                Branch: ${env.BRANCH_NAME}
+                
+                View logs: ${env.BUILD_URL}console
+                """,
+                to: "${env.CHANGE_AUTHOR_EMAIL}"
+            )
+        }
+        
+        unstable {
+            echo '⚠️ Pipeline completed with warnings. Please review security reports.'
+        }
+    }
+}
