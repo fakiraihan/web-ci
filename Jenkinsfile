@@ -567,12 +567,13 @@ pipeline {
                             REM Clean any previous app container
                             docker rm -f ci4-app-dast 2>nul || echo No previous ci4-app-dast container
 
-                            REM Start PHP built-in server inside container, serving CodeIgniter from /app/public
+                            REM Start CodeIgniter with spark serve inside container for proper routing
                             docker run -d --name ci4-app-dast ^
                                 --network %DOCKER_NETWORK% ^
+                                -e CI_ENVIRONMENT=development ^
                                 -v "%CD%":/app:ro ^
                                 -w /app ^
-                                php:8.2-cli sh -lc "php -S 0.0.0.0:8080 -t /app/public /app/public/index.php" 1>nul
+                                php:8.2-cli sh -lc "php -d display_errors=1 spark serve --host=0.0.0.0 --port=8080" 1>nul
 
                             echo Waiting for containerized app to start...
                             ping 127.0.0.1 -n 11 > nul
@@ -581,7 +582,15 @@ pipeline {
                             docker run --rm --network %DOCKER_NETWORK% curlimages/curl:8.10.1 -sSf http://ci4-app-dast:8080 >nul 2>&1 && (
                                 echo ✅ App reachable inside Docker network
                             ) || (
-                                echo ⚠️ Could not verify app inside Docker network, proceeding with ZAP attempt anyway
+                                echo ⚠️ App check failed (non-200). Collecting diagnostics...
+                                docker logs --tail 200 ci4-app-dast > app_container_logs.txt 2>&1
+                                docker exec ci4-app-dast php -v > app_php_info.txt 2>&1
+                                docker exec ci4-app-dast php -m > app_php_modules.txt 2>&1
+                                if not exist reports mkdir reports
+                                move app_container_logs.txt reports\ >nul 2>&1
+                                move app_php_info.txt reports\ >nul 2>&1
+                                move app_php_modules.txt reports\ >nul 2>&1
+                                echo Proceeding with ZAP attempt anyway
                             )
 
                             echo Running ZAP against containerized app...
