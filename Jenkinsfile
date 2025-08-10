@@ -582,34 +582,46 @@ pipeline {
                         ping 127.0.0.1 -n 11 > nul
                         
                         REM Test if app is accessible on both ports (app might still use 8080)
-                        curl -f http://localhost:8081 > nul 2>&1 && set "APP_PORT=8081" || (
-                            curl -f http://localhost:8080 > nul 2>&1 && set "APP_PORT=8080" || set "APP_PORT=NONE"
+                        set "APP_PORT=NONE"
+                        
+                        curl -f http://localhost:8081 > nul 2>&1
+                        if %errorlevel% equ 0 (
+                            set "APP_PORT=8081"
+                            echo ✅ Application accessible on port 8081
+                            goto test_docker
                         )
                         
+                        curl -f http://localhost:8080 > nul 2>&1
+                        if %errorlevel% equ 0 (
+                            set "APP_PORT=8080"
+                            echo ✅ Application accessible on port 8080
+                            goto test_docker
+                        )
+                        
+                        echo ⚠️ Could not access application on any port
+                        goto create_manual_guide
+                        
+                        :test_docker
                         if "%APP_PORT%" NEQ "NONE" (
-                        if "%APP_PORT%" NEQ "NONE" (
-                            echo ✅ Application accessible on port %APP_PORT%
-                            
-                            REM Try simple Docker approach
-                            echo Attempting Docker ZAP scan...
-                            docker run --rm ^
-                                -v "%CD%\\reports":/zap/wrk/:rw ^
-                                zaproxy/zap-stable zap-baseline.py ^
-                                -t http://host.docker.internal:%APP_PORT% ^
-                                -g gen.conf ^
-                                -J zap-baseline-report.json ^
-                                -r zap-baseline-report.html ^
-                                -m 1 ^
-                                -d || echo Docker scan attempt completed
-                            
-                            if exist reports\\zap-baseline-report.html (
-                                echo ✅ Docker ZAP scan completed successfully
-                                goto zap_success
-                            ) else (
-                                echo ⚠️ Docker scan did not generate reports
-                            )
+                        :test_docker
+                        REM Try simple Docker approach
+                        echo Attempting Docker ZAP scan...
+                        docker run --rm ^
+                            -v "%CD%\\reports":/zap/wrk/:rw ^
+                            zaproxy/zap-stable zap-baseline.py ^
+                            -t http://host.docker.internal:%APP_PORT% ^
+                            -g gen.conf ^
+                            -J zap-baseline-report.json ^
+                            -r zap-baseline-report.html ^
+                            -m 1 ^
+                            -d || echo Docker scan attempt completed
+                        
+                        if exist reports\\zap-baseline-report.html (
+                            echo ✅ Docker ZAP scan completed successfully
+                            goto zap_success
                         ) else (
-                            echo ⚠️ Could not access application on any port
+                            echo ⚠️ Docker scan did not generate reports
+                            goto create_manual_guide
                         )
                         
                         echo All automated ZAP attempts failed - creating manual security testing guide...
