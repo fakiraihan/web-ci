@@ -604,35 +604,6 @@ pipeline {
                 }
             }
         }
-                            allowMissing: true,
-                            alwaysLinkToLastBuild: false,
-                            keepAll: true,
-                            reportDir: '.',
-                            reportFiles: 'zap-baseline-report.html',
-                            reportName: 'ZAP Baseline Security Report'
-                        ])
-                        
-                        publishHTML([
-                            allowMissing: true,
-                            alwaysLinkToLastBuild: false,
-                            keepAll: true,
-                            reportDir: '.',
-                            reportFiles: 'zap-full-report.html',
-                            reportName: 'ZAP Full Security Report'
-                        ])
-                        
-                        publishHTML([
-                            allowMissing: true,
-                            alwaysLinkToLastBuild: false,
-                            keepAll: true,
-                            reportDir: '.',
-                            reportFiles: 'zap-spider-report.html',
-                            reportName: 'ZAP Spider Security Report'
-                        ])
-                    }
-                }
-            }
-        }
 
         stage('Security Analysis Results') {
             steps {
