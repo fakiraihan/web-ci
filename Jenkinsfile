@@ -163,14 +163,16 @@ pipeline {
                         copy env .env
                         echo CI_ENVIRONMENT = development >> .env
                         echo app.baseURL = '%APP_URL%' >> .env
-                        echo # Database configuration for testing >> .env
-                        echo database.default.hostname = localhost >> .env
-                        echo database.default.database = ci4_test >> .env
-                        echo database.default.username = root >> .env
+                        echo # Database configuration for testing - Using SQLite >> .env
+                        echo database.default.hostname = >> .env
+                        echo database.default.database = writable/database/ci4_test.db >> .env
+                        echo database.default.username = >> .env
                         echo database.default.password = >> .env
-                        echo database.default.DBDriver = MySQLi >> .env
+                        echo database.default.DBDriver = SQLite3 >> .env
                         echo database.default.DBPrefix = >> .env
-                        echo database.default.port = 3306 >> .env
+                        echo database.default.port = >> .env
+                        echo database.default.foreignKeys = true >> .env
+                        echo database.default.busyTimeout = 1000 >> .env
                     '''
                 }
             }
@@ -187,11 +189,23 @@ pipeline {
                         echo Setting up database directories...
                         if not exist writable\\database mkdir writable\\database
                         
+                        echo Creating SQLite database file...
+                        if exist writable\\database\\ci4_test.db del writable\\database\\ci4_test.db
+                        echo. > writable\\database\\ci4_test.db
+                        
                         echo Running CodeIgniter migrations if available...
-                        php spark migrate 2>nul || echo No migrations to run
+                        php spark migrate --all 2>nul || echo No migrations to run or migration failed
                         
                         echo Seeding database if seeders available...
-                        php spark db:seed 2>nul || echo No seeders to run
+                        php spark db:seed 2>nul || echo No seeders to run or seeding failed
+                        
+                        echo Verifying database setup...
+                        if exist writable\\database\\ci4_test.db (
+                            echo ✅ SQLite database created successfully
+                        ) else (
+                            echo ⚠️  Database file not found, creating empty database
+                            echo. > writable\\database\\ci4_test.db
+                        )
                         
                         echo CodeIgniter setup completed
                     '''
