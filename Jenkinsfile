@@ -527,24 +527,13 @@ pipeline {
                             netstat -an | findstr :8080
                             exit /b 1
                         )
-                        echo ✅ CodeIgniter application is running successfully
+                        echo ✅ CodeIgniter application is running successfully on localhost:8080
                         
-                        echo Testing application from different interfaces...
-                        curl -f http://127.0.0.1:8080 > nul 2>&1 && echo ✅ 127.0.0.1:8080 accessible || echo ⚠️ 127.0.0.1:8080 failed
+                        echo Testing basic connectivity...
+                        curl -f http://127.0.0.1:8080 > nul 2>&1 && echo ✅ 127.0.0.1:8080 accessible || echo ⚠️ 127.0.0.1:8080 not accessible
                         
-                        echo Getting local IP address for Docker access...
-                        for /f "tokens=2 delims=:" %%a in ('ipconfig ^| findstr /c:"IPv4 Address" ^| findstr /v "127.0.0.1"') do (
-                            set "LOCAL_IP=%%a"
-                            set "LOCAL_IP=!LOCAL_IP: =!"
-                            if not "!LOCAL_IP!"=="" (
-                                echo Found IP: !LOCAL_IP!
-                                curl -f http://!LOCAL_IP!:8080 > nul 2>&1 && echo ✅ !LOCAL_IP!:8080 accessible || echo ⚠️ !LOCAL_IP!:8080 failed
-                                goto :ip_done
-                            )
-                        )
-                        :ip_done
-                        
-                        echo Application is ready for DAST testing on http://localhost:8080
+                        echo Application is ready for DAST testing
+                        echo Main target: http://localhost:8080
                     '''
                 }
             }
