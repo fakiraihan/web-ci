@@ -163,15 +163,7 @@ pipeline {
                         copy env .env
                         echo CI_ENVIRONMENT = development >> .env
                         echo app.baseURL = '%APP_URL%' >> .env
-                        echo # Database configuration for testing >> .env
-                        echo # Database driver will be set dynamically based on available extensions >> .env
-                        echo database.default.hostname = >> .env
-                        echo database.default.database = >> .env
-                        echo database.default.username = >> .env
-                        echo database.default.password = >> .env
-                        echo database.default.DBDriver = >> .env
-                        echo database.default.DBPrefix = >> .env
-                        echo database.default.port = >> .env
+                        echo # Database configuration will be set in Install Dependencies stage >> .env
                     '''
                 }
             }
@@ -244,9 +236,32 @@ pipeline {
                             del create_db.php
                             
                             echo Updating .env for SQLite...
-                            echo database.default.database = writable/database/ci4_test.db >> .env
+                            echo. >> .env
+                            echo # SQLite Database Configuration >> .env
+                            echo database.default.hostname = >> .env
+                            echo database.default.database = %CD%\\writable\\database\\ci4_test.db >> .env
+                            echo database.default.username = >> .env
+                            echo database.default.password = >> .env
                             echo database.default.DBDriver = SQLite3 >> .env
+                            echo database.default.DBPrefix = >> .env
+                            echo database.default.port = >> .env
                             echo database.default.foreignKeys = true >> .env
+                            echo database.default.busyTimeout = 1000 >> .env
+                            
+                            echo Showing .env database configuration:
+                            findstr "database" .env
+                            
+                            echo Testing CodeIgniter database configuration...
+                            echo ^<?php > test_ci_db.php
+                            echo require_once 'vendor/autoload.php'; >> test_ci_db.php
+                            echo $dotenv = \\Dotenv\\Dotenv::createImmutable(__DIR__^); >> test_ci_db.php
+                            echo $dotenv-^>load(^); >> test_ci_db.php
+                            echo echo "Database file path from env: " . $_ENV['database.default.database'] . "\\n"; >> test_ci_db.php
+                            echo echo "File exists: " . (file_exists($_ENV['database.default.database']^) ? "YES" : "NO"^) . "\\n"; >> test_ci_db.php
+                            echo ?^> >> test_ci_db.php
+                            
+                            php test_ci_db.php || echo Could not test CI database config
+                            del test_ci_db.php
                             
                             echo Verifying database file...
                             if exist writable\\database\\ci4_test.db (
