@@ -226,13 +226,22 @@ pipeline {
                             REM Delete existing database file if it exists
                             if exist writable\\database\\ci4_test.db del writable\\database\\ci4_test.db
                             
-                            REM Create proper SQLite database using PHP
-                            php -r "^
-                                $db = new SQLite3('writable/database/ci4_test.db', SQLITE3_OPEN_READWRITE | SQLITE3_OPEN_CREATE); ^
-                                $db->exec('CREATE TABLE IF NOT EXISTS test (id INTEGER PRIMARY KEY, name TEXT);'); ^
-                                $db->close(); ^
-                                echo 'SQLite database created successfully\n'; ^
-                            "
+                            REM Create proper SQLite database using a temporary PHP script
+                            echo Creating database creation script...
+                            echo ^<?php > create_db.php
+                            echo try { >> create_db.php
+                            echo     $db = new SQLite3('writable/database/ci4_test.db', SQLITE3_OPEN_READWRITE ^| SQLITE3_OPEN_CREATE^); >> create_db.php
+                            echo     $db-^>exec('CREATE TABLE IF NOT EXISTS test (id INTEGER PRIMARY KEY, name TEXT^);'^); >> create_db.php
+                            echo     $db-^>close(^); >> create_db.php
+                            echo     echo "SQLite database created successfully\\n"; >> create_db.php
+                            echo } catch (Exception $e^) { >> create_db.php
+                            echo     echo "Database creation failed: " . $e-^>getMessage(^) . "\\n"; >> create_db.php
+                            echo } >> create_db.php
+                            echo ?^> >> create_db.php
+                            
+                            echo Running database creation script...
+                            php create_db.php
+                            del create_db.php
                             
                             echo Updating .env for SQLite...
                             echo database.default.database = writable/database/ci4_test.db >> .env
@@ -248,15 +257,18 @@ pipeline {
                             )
                             
                             echo Testing database connection...
-                            php -r "^
-                                try { ^
-                                    $db = new SQLite3('writable/database/ci4_test.db'); ^
-                                    echo 'Database connection test: SUCCESS\n'; ^
-                                    $db->close(); ^
-                                } catch (Exception $e) { ^
-                                    echo 'Database connection test: FAILED - ' . $e->getMessage() . '\n'; ^
-                                } ^
-                            "
+                            echo ^<?php > test_db.php
+                            echo try { >> test_db.php
+                            echo     $db = new SQLite3('writable/database/ci4_test.db'^); >> test_db.php
+                            echo     echo "Database connection test: SUCCESS\\n"; >> test_db.php
+                            echo     $db-^>close(^); >> test_db.php
+                            echo } catch (Exception $e^) { >> test_db.php
+                            echo     echo "Database connection test: FAILED - " . $e-^>getMessage(^) . "\\n"; >> test_db.php
+                            echo } >> test_db.php
+                            echo ?^> >> test_db.php
+                            
+                            php test_db.php
+                            del test_db.php
                             
                             echo Running migrations...
                             php spark migrate --all || echo Migration failed, continuing without migrations
