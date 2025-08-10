@@ -602,8 +602,6 @@ pipeline {
                         goto create_manual_guide
                         
                         :test_docker
-                        if "%APP_PORT%" NEQ "NONE" (
-                        :test_docker
                         REM Try simple Docker approach
                         echo Attempting Docker ZAP scan...
                         docker run --rm ^
