@@ -562,62 +562,8 @@ pipeline {
                 }
             }
         }
-                        echo ^<li^>Test file upload functionality for malicious files^</li^> >> reports\\manual-security-guide.html
-                        echo ^<li^>Test for command injection attacks^</li^> >> reports\\manual-security-guide.html
-                        echo ^</ul^> >> reports\\manual-security-guide.html
-                        echo ^<h3^>2. Authentication and Authorization^</h3^> >> reports\\manual-security-guide.html
-                        echo ^<ul^> >> reports\\manual-security-guide.html
-                        echo ^<li^>Test for weak password policies^</li^> >> reports\\manual-security-guide.html
-                        echo ^<li^>Test for authentication bypass^</li^> >> reports\\manual-security-guide.html
-                        echo ^<li^>Test for privilege escalation^</li^> >> reports\\manual-security-guide.html
-                        echo ^<li^>Test session management and timeout^</li^> >> reports\\manual-security-guide.html
-                        echo ^</ul^> >> reports\\manual-security-guide.html
-                        echo ^<h3^>3. CodeIgniter Specific Tests^</h3^> >> reports\\manual-security-guide.html
-                        echo ^<ul^> >> reports\\manual-security-guide.html
-                        echo ^<li^>Check for exposed configuration files^</li^> >> reports\\manual-security-guide.html
-                        echo ^<li^>Test CSRF protection implementation^</li^> >> reports\\manual-security-guide.html
-                        echo ^<li^>Verify database security configuration^</li^> >> reports\\manual-security-guide.html
-                        echo ^<li^>Test routing security and access controls^</li^> >> reports\\manual-security-guide.html
-                        echo ^</ul^> >> reports\\manual-security-guide.html
-                        echo ^<h2^>Recommended Tools:^</h2^> >> reports\\manual-security-guide.html
-                        echo ^<ul^> >> reports\\manual-security-guide.html
-                        echo ^<li^>OWASP ZAP Desktop Edition^</li^> >> reports\\manual-security-guide.html
-                        echo ^<li^>Burp Suite Community Edition^</li^> >> reports\\manual-security-guide.html
-                        echo ^<li^>SQLMap for SQL injection testing^</li^> >> reports\\manual-security-guide.html
-                        echo ^<li^>Browser developer tools for manual testing^</li^> >> reports\\manual-security-guide.html
-                        echo ^</ul^> >> reports\\manual-security-guide.html
-                        echo ^</body^> >> reports\\manual-security-guide.html
-                        echo ^</html^> >> reports\\manual-security-guide.html
-                        
-                        echo ✅ Manual security testing guide created
-                        
-                        :end_dast
-                        echo DAST phase completed
-                    '''
-                    
-                    // Check and report results
-                    bat '''
-                        echo Checking DAST results...
-                        if exist reports\\zap-baseline-report.html (
-                            echo ✅ ZAP baseline report generated
-                            dir reports\\zap-baseline-report.html
-                        )
-                        
-                        if exist reports\\manual-security-guide.html (
-                            echo ✅ Manual security testing guide created
-                            dir reports\\manual-security-guide.html
-                        )
-                        
-                        if exist reports\\*.html (
-                            echo Available reports:
-                            dir reports\\*.html
-                        ) else (
-                            echo Creating minimal fallback report...
-                            echo Security scan attempted but failed due to environment limitations > reports\\dast-attempt-log.txt
-                        )
-                        
-                        echo DAST stage completed - continuing with pipeline
-                    '''
+
+        stage('Archive Results') {
                 }
             }
             post {
