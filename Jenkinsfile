@@ -289,7 +289,7 @@ pipeline {
                             php spark migrate --all || echo Migration failed, continuing without migrations
                             
                             echo Running seeders...
-                            php spark db:seed || echo Seeding failed, continuing without seeders
+                            php spark db:seed DatabaseSeeder || php spark db:seed UserSeeder || php spark db:seed --class=DatabaseSeeder || echo Seeding failed, continuing without seeders
                         ) || (
                             echo ⚠️  SQLite3 extension not available, skipping database setup
                             echo This is fine for basic testing and security scans
