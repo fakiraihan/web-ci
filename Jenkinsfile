@@ -564,40 +564,46 @@ pipeline {
         }
 
         stage('Archive Results') {
+            steps {
+                script {
+                    echo 'Archiving security scan results...'
+                    
+                    // Copy reports to workspace root for archiving
+                    bat '''
+                        if exist reports\\*.html (
+                            copy reports\\*.html . >nul 2>&1
+                            echo HTML reports copied successfully
+                        ) else (
+                            echo No HTML reports found
+                        )
+                        
+                        if exist reports\\*.json (
+                            copy reports\\*.json . >nul 2>&1
+                            echo JSON reports copied successfully
+                        ) else (
+                            echo No JSON reports found
+                        )
+                        
+                        if exist reports\\*.xml (
+                            copy reports\\*.xml . >nul 2>&1
+                            echo XML reports copied successfully
+                        ) else (
+                            echo No XML reports found
+                        )
+                    '''
+                    
+                    // Archive reports
+                    archiveArtifacts artifacts: 'reports/**,*.html,*.json,*.xml', fingerprint: true, allowEmptyArchive: true
+                    
+                    // List what was archived
+                    bat '''
+                        echo Security scan artifacts:
+                        dir reports 2>nul || echo No reports directory
+                        dir *.html *.json *.xml 2>nul || echo No security report files in root
+                    '''
                 }
             }
-            post {
-                always {
-                    script {
-                        // Copy reports to workspace root for archiving
-                        bat '''
-                            if exist reports\\*.html (
-                                copy reports\\*.html . >nul 2>&1
-                                echo HTML reports copied successfully
-                            ) else (
-                                echo No HTML reports found
-                            )
-                            
-                            if exist reports\\*.json (
-                                copy reports\\*.json . >nul 2>&1
-                                echo JSON reports copied successfully
-                            ) else (
-                                echo No JSON reports found
-                            )
-                            
-                            if exist reports\\*.xml (
-                                copy reports\\*.xml . >nul 2>&1
-                                echo XML reports copied successfully
-                            ) else (
-                                echo No XML reports found
-                            )
-                        '''
-                        
-                        // Archive ZAP reports
-                        archiveArtifacts artifacts: 'zap-*.html,zap-*.json,zap-*.xml', fingerprint: true, allowEmptyArchive: true
-                        
-                        // Publish ZAP reports
-                        publishHTML([
+        }
                             allowMissing: true,
                             alwaysLinkToLastBuild: false,
                             keepAll: true,
