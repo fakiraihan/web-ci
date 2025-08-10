@@ -556,6 +556,51 @@ pipeline {
                         if not exist reports mkdir reports
                         if exist zap-baseline-report.html move zap-baseline-report.html reports\\
                         if exist zap-baseline-report.json move zap-baseline-report.json reports\\
+
+                        REM If baseline report not generated, try alternative networking via Docker network
+                        if not exist reports\\zap-baseline-report.html (
+                            echo --- Alternative networking attempt: run app inside Docker network ---
+
+                            REM Ensure network exists
+                            docker network inspect %DOCKER_NETWORK% >nul 2>&1 || docker network create %DOCKER_NETWORK%
+
+                            REM Clean any previous app container
+                            docker rm -f ci4-app-dast 2>nul || echo No previous ci4-app-dast container
+
+                            REM Start PHP built-in server inside container, serving CodeIgniter from /app/public
+                            docker run -d --name ci4-app-dast ^
+                                --network %DOCKER_NETWORK% ^
+                                -v "%CD%":/app:ro ^
+                                -w /app ^
+                                php:8.2-cli sh -lc "php -S 0.0.0.0:8080 -t /app/public /app/public/index.php" 1>nul
+
+                            echo Waiting for containerized app to start...
+                            ping 127.0.0.1 -n 11 > nul
+
+                            echo Verifying containerized app from same Docker network...
+                            docker run --rm --network %DOCKER_NETWORK% curlimages/curl:8.10.1 -sSf http://ci4-app-dast:8080 >nul 2>&1 && (
+                                echo ✅ App reachable inside Docker network
+                            ) || (
+                                echo ⚠️ Could not verify app inside Docker network, proceeding with ZAP attempt anyway
+                            )
+
+                            echo Running ZAP against containerized app...
+                            docker run --rm ^
+                                --network %DOCKER_NETWORK% ^
+                                -v "%CD%":/zap/wrk/:rw ^
+                                zaproxy/zap-stable zap-baseline.py ^
+                                -t http://ci4-app-dast:8080 ^
+                                -r zap-baseline-report.html ^
+                                -J zap-baseline-report.json ^
+                                -d || echo Alternative DAST attempt completed
+
+                            echo Moving alternative attempt reports...
+                            if exist zap-baseline-report.html move zap-baseline-report.html reports\\
+                            if exist zap-baseline-report.json move zap-baseline-report.json reports\\
+
+                            echo Cleaning up containerized app...
+                            docker rm -f ci4-app-dast 1>nul 2>nul || echo ci4-app-dast already removed
+                        )
                         
                         echo ✅ DAST scanning completed
                     '''
