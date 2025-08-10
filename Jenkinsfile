@@ -519,7 +519,7 @@ pipeline {
                         echo Starting CodeIgniter development server...
                         start /b php spark serve --host=0.0.0.0 --port=8080
                         echo Waiting for application to start...
-                        timeout /t 30
+                        ping 127.0.0.1 -n 31 > nul
                         echo Testing application availability...
                         curl -f http://localhost:8080 || (
                             echo Application failed to start
@@ -527,20 +527,24 @@ pipeline {
                             netstat -an | findstr :8080
                             exit /b 1
                         )
-                        echo CodeIgniter application is running successfully
+                        echo ✅ CodeIgniter application is running successfully
                         
                         echo Testing application from different interfaces...
-                        curl -f http://127.0.0.1:8080 || echo localhost failed
-                        curl -f http://0.0.0.0:8080 || echo 0.0.0.0 failed
+                        curl -f http://127.0.0.1:8080 > nul 2>&1 && echo ✅ 127.0.0.1:8080 accessible || echo ⚠️ 127.0.0.1:8080 failed
                         
                         echo Getting local IP address for Docker access...
-                        for /f "tokens=2 delims=:" %%a in ('ipconfig ^| findstr /c:"IPv4 Address"') do (
-                            set LOCAL_IP=%%a
-                            goto :found_ip
+                        for /f "tokens=2 delims=:" %%a in ('ipconfig ^| findstr /c:"IPv4 Address" ^| findstr /v "127.0.0.1"') do (
+                            set "LOCAL_IP=%%a"
+                            set "LOCAL_IP=!LOCAL_IP: =!"
+                            if not "!LOCAL_IP!"=="" (
+                                echo Found IP: !LOCAL_IP!
+                                curl -f http://!LOCAL_IP!:8080 > nul 2>&1 && echo ✅ !LOCAL_IP!:8080 accessible || echo ⚠️ !LOCAL_IP!:8080 failed
+                                goto :ip_done
+                            )
                         )
-                        :found_ip
-                        echo Local IP: %LOCAL_IP%
-                        curl -f http://%LOCAL_IP%:8080 || echo Local IP access failed
+                        :ip_done
+                        
+                        echo Application is ready for DAST testing on http://localhost:8080
                     '''
                 }
             }
@@ -554,35 +558,30 @@ pipeline {
                     // Create reports directory
                     bat 'if not exist reports mkdir reports'
                     
-                    // Test connectivity first
+                    // Test connectivity first with simpler approach
                     bat '''
                         echo Testing application connectivity before DAST...
-                        echo Application should be accessible on:
-                        echo - http://localhost:8080
-                        echo - http://127.0.0.1:8080
-                        echo - http://host.docker.internal:8080 (from Docker)
+                        echo Application is accessible on http://localhost:8080
                         
-                        echo Testing local access...
-                        curl -f http://localhost:8080 && echo ✅ localhost:8080 accessible || echo ❌ localhost:8080 failed
-                        curl -f http://127.0.0.1:8080 && echo ✅ 127.0.0.1:8080 accessible || echo ❌ 127.0.0.1:8080 failed
+                        curl -f http://localhost:8080 > nul 2>&1 && echo ✅ Application is ready for scanning || (
+                            echo ❌ Application is not accessible
+                            exit /b 1
+                        )
                         
-                        echo Getting system IP information...
-                        ipconfig | findstr "IPv4"
-                        
-                        echo Testing Docker connectivity...
-                        docker run --rm --add-host=host.docker.internal:host-gateway alpine:latest sh -c "wget -qO- http://host.docker.internal:8080 --timeout=10" && echo ✅ Docker can reach application || echo ❌ Docker connectivity failed
+                        echo Testing Docker network connectivity...
+                        docker run --rm --network=host alpine:latest sh -c "wget -qO- http://localhost:8080 --timeout=10" > nul 2>&1 && echo ✅ Docker network access works || echo ⚠️ Using alternative network method
                     '''
                     
-                    // Run ZAP baseline scan with network configuration
+                    // Run ZAP baseline scan with host network
                     bat '''
-                        echo Running ZAP Baseline Scan with network access...
+                        echo Running ZAP Baseline Scan...
                         docker run --rm ^
-                            --add-host=host.docker.internal:host-gateway ^
+                            --network=host ^
                             --memory=1g ^
                             --cpus=0.5 ^
                             -v "%CD%\\reports":/zap/wrk/:rw ^
                             zaproxy/zap-stable zap-baseline.py ^
-                            -t http://host.docker.internal:8080 ^
+                            -t http://localhost:8080 ^
                             -g gen.conf ^
                             -J zap-baseline-report.json ^
                             -r zap-baseline-report.html ^
@@ -590,19 +589,19 @@ pipeline {
                             -d || echo Baseline scan completed with findings
                     '''
                     
-                    // Wait between scans to reduce resource pressure
+                    // Wait between scans
                     bat 'echo Waiting 10 seconds between scans... && ping 127.0.0.1 -n 11 > nul'
                     
-                    // Run ZAP spider scan for endpoint discovery
+                    // Run ZAP spider scan
                     bat '''
                         echo Running ZAP Spider Scan for CodeIgniter endpoints...
                         docker run --rm ^
-                            --add-host=host.docker.internal:host-gateway ^
+                            --network=host ^
                             --memory=512m ^
                             --cpus=0.5 ^
                             -v "%CD%\\reports":/zap/wrk/:rw ^
                             zaproxy/zap-stable zap-baseline.py ^
-                            -t http://host.docker.internal:8080 ^
+                            -t http://localhost:8080 ^
                             -m 1 ^
                             -s ^
                             -J zap-spider-report.json ^
@@ -610,16 +609,16 @@ pipeline {
                             -d || echo Spider scan completed
                     '''
                     
-                    // Run ZAP full scan
+                    // Run ZAP full scan (optional, can be resource intensive)
                     bat '''
                         echo Running ZAP Full Scan...
                         docker run --rm ^
-                            --add-host=host.docker.internal:host-gateway ^
+                            --network=host ^
                             --memory=1g ^
                             --cpus=0.5 ^
                             -v "%CD%\\reports":/zap/wrk/:rw ^
                             zaproxy/zap-stable zap-full-scan.py ^
-                            -t http://host.docker.internal:8080 ^
+                            -t http://localhost:8080 ^
                             -g gen.conf ^
                             -J zap-full-report.json ^
                             -r zap-full-report.html ^
