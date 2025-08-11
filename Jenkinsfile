@@ -428,7 +428,7 @@ pipeline {
                             -Dsonar.language=php ^
                             -Dsonar.sources=app,public ^
                             -Dsonar.tests=tests ^
-                            -Dsonar.exclusions=vendor/**,writable/**,system/**,builds/**,env,preload.php,spark ^
+                            -Dsonar.exclusions=vendor/**,writable/**,system/**,builds/**,env,preload.php,spark,app/Config/**,app/Views/errors/** ^
                             -Dsonar.php.coverage.reportPaths=build/logs/coverage.xml ^
                             -Dsonar.php.tests.reportPath=build/logs/phpunit-report.xml
                     '''
