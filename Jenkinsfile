@@ -567,21 +567,20 @@ pipeline {
                             REM Clean any previous app container
                             docker rm -f ci4-app-dast 2>nul || echo No previous ci4-app-dast container
 
-                            REM Start CodeIgniter with spark serve inside container for proper routing
+                            REM Start CodeIgniter using Apache inside container for broader extension support
                             docker run -d --name ci4-app-dast ^
                                 --network %DOCKER_NETWORK% ^
                                 -e CI_ENVIRONMENT=development ^
+                                -e WEB_DOCUMENT_ROOT=/app/public ^
                                 -v "%CD%":/app:ro ^
-                                -w /app ^
-                                php:8.2-cli sh -lc "php -d display_errors=1 spark serve --host=0.0.0.0 --port=8080" 1>nul
+                                webdevops/php-apache:8.2 1>nul
 
                             echo Waiting for containerized app to start...
                             ping 127.0.0.1 -n 11 > nul
 
                             echo Verifying containerized app from same Docker network...
-                            docker run --rm --network %DOCKER_NETWORK% curlimages/curl:8.10.1 -sSf http://ci4-app-dast:8080 >nul 2>&1 && (
-                                echo ✅ App reachable inside Docker network
-                            ) || (
+                            docker run --rm --network %DOCKER_NETWORK% curlimages/curl:8.10.1 -sSf http://ci4-app-dast/ >nul 2>&1
+                            if errorlevel 1 (
                                 echo ⚠️ App check failed (non-200). Collecting diagnostics...
                                 docker logs --tail 200 ci4-app-dast > app_container_logs.txt 2>&1
                                 docker exec ci4-app-dast php -v > app_php_info.txt 2>&1
@@ -591,6 +590,8 @@ pipeline {
                                 move app_php_info.txt reports\\ >nul 2>&1
                                 move app_php_modules.txt reports\\ >nul 2>&1
                                 echo Proceeding with ZAP attempt anyway
+                            ) else (
+                                echo ✅ App reachable inside Docker network
                             )
 
                             echo Running ZAP against containerized app...
@@ -598,7 +599,7 @@ pipeline {
                                 --network %DOCKER_NETWORK% ^
                                 -v "%CD%":/zap/wrk/:rw ^
                                 zaproxy/zap-stable zap-baseline.py ^
-                                -t http://ci4-app-dast:8080 ^
+                                -t http://ci4-app-dast/ ^
                                 -r zap-baseline-report.html ^
                                 -J zap-baseline-report.json ^
                                 -d || echo Alternative DAST attempt completed
