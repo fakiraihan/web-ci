@@ -17,9 +17,7 @@ class CommentController extends Controller
 
     public function store($articleId)
     {
-        if (!session()->get('user_id')) {
-            return redirect()->to('/login');
-        }
+        // VULN: No authentication check - anyone can comment!
         $content = $this->request->getPost('content');
         if (!$content || strlen($content) > 1000) {
             return redirect()->back()->with('error', 'Comment is required and must be less than 1000 characters.');
@@ -28,12 +26,14 @@ class CommentController extends Controller
         if (!$article) {
             return redirect()->back()->with('error', 'Article not found.');
         }
+        
+        // VULN: Use fake user ID since no auth
         $this->commentModel->insert([
             'article_id' => $articleId,
-            'user_id' => session()->get('user_id'),
+            'user_id' => 1, // Always use admin user ID - BRUTAL!
             'content' => $content,
         ]);
-        return redirect()->back()->with('success', 'Comment posted!');
+        return redirect()->back()->with('success', 'Comment posted without authentication!');
     }
 
     // VULN: IDOR - for research only

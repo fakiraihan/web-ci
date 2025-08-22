@@ -19,29 +19,21 @@
       <a href="<?= base_url('/articles') ?>" class="flex min-w-[84px] max-w-[480px] cursor-pointer items-center justify-center overflow-hidden rounded-full h-10 px-4 bg-[#2d372a] text-white text-sm font-bold leading-normal tracking-[0.015em]">
         <span class="truncate">Dashboard</span>
       </a>
-      <?php if (session()->get('logged_in')): ?>
-        <?php if (session()->get('is_admin')): ?>
-          <a href="<?= base_url('/admin') ?>" class="flex min-w-[84px] max-w-[480px] cursor-pointer items-center justify-center overflow-hidden rounded-full h-10 px-4 bg-[#53d22c] text-[#131712] text-sm font-bold leading-normal tracking-[0.015em]">
-            <span class="truncate">Admin</span>
-          </a>
-        <?php endif; ?>
-        <a href="<?= base_url('/logout') ?>" class="flex min-w-[84px] max-w-[480px] cursor-pointer items-center justify-center overflow-hidden rounded-full h-10 px-4 bg-[#2d372a] text-white text-sm font-bold leading-normal tracking-[0.015em]">
-          <span class="truncate">Logout</span>
-        </a>
-      <?php else: ?>
-        <a href="<?= base_url('/login') ?>" class="flex min-w-[84px] max-w-[480px] cursor-pointer items-center justify-center overflow-hidden rounded-full h-10 px-4 bg-[#2d372a] text-white text-sm font-bold leading-normal tracking-[0.015em]">
-          <span class="truncate">Login</span>
-        </a>
-      <?php endif; ?>
+      <!-- VULN: Admin access without any authentication! -->
+      <a href="<?= base_url('/admin') ?>" class="flex min-w-[84px] max-w-[480px] cursor-pointer items-center justify-center overflow-hidden rounded-full h-10 px-4 bg-[#53d22c] text-[#131712] text-sm font-bold leading-normal tracking-[0.015em]">
+        <span class="truncate">Admin (No Auth!)</span>
+      </a>
+      <!-- VULN: Direct links to dangerous endpoints -->
+      <a href="<?= base_url('/search/<script>alert("XSS")</script>') ?>" class="flex min-w-[84px] max-w-[480px] cursor-pointer items-center justify-center overflow-hidden rounded-full h-10 px-4 bg-red-600 text-white text-sm font-bold leading-normal tracking-[0.015em]">
+        <span class="truncate">XSS Test</span>
+      </a>
+      <a href="<?= base_url('/user/1 UNION SELECT * FROM articles--') ?>" class="flex min-w-[84px] max-w-[480px] cursor-pointer items-center justify-center overflow-hidden rounded-full h-10 px-4 bg-red-600 text-white text-sm font-bold leading-normal tracking-[0.015em]">
+        <span class="truncate">SQLi Test</span>
+      </a>
     </div>
     <div
       class="bg-center bg-no-repeat aspect-square bg-cover rounded-full size-10"
-      <?php if (session()->get('logged_in')): ?>
-        <?php $initial = strtoupper(session()->get('username')[0]) . '.'; ?>
-        style='background-image: url("https://ui-avatars.com/api/?name=<?= urlencode($initial) ?>&background=2d372a&color=fff")'
-      <?php else: ?>
-        style='background-image: url("https://lh3.googleusercontent.com/aida-public/AB6AXuBU25TLTd2R9JgUfMpfpfctC0X18jjavkc6GwkCiTjRzejQD-bpw5G3n4FzyUg31ARLWhaYoMFOdgTECpBHqJ14z9IwURxquVUDW9tZ7qphsq5kb5tz2oStZVosVY6I2FE7ZNvjN6BZcA-SWcCQp8I0HZYcAJD5xHPVU1bMW9gzAL0DZrYKBwPAEUVylxk5nK-Zg0ncY-2FAG2kLZMhI6H9hTIglK22hsLbo0TYo17cEUWVEbT6YzsEYGFIW16uCletQelAGKshsto")'
-      <?php endif; ?>
+      style='background-image: url("https://ui-avatars.com/api/?name=VULN&background=ff0000&color=fff")'
     ></div>
   </div>
 </header>
@@ -123,15 +115,12 @@
           </div>
         <?php endforeach; ?>
       <?php endif; ?>
-      <?php if (session()->get('logged_in')): ?>
+      <!-- VULN: Always show comment form - no auth check -->
       <form action="<?= base_url('/articles/' . $article['id'] . '/comments') ?>" method="POST" class="flex items-center gap-3 mt-4">
         <!-- CSRF token intentionally removed for research -->
-        <input name="content" required maxlength="1000" placeholder="Add a comment..." class="form-input flex w-full min-w-0 flex-1 resize-none overflow-hidden rounded-xl text-white focus:outline-0 focus:ring-0 border border-[#42513e] bg-[#1f251d] focus:border-[#42513e] h-12 placeholder:text-[#a5b6a0] p-[15px] text-base font-normal leading-normal" />
+        <input name="content" required maxlength="1000" placeholder="Add a comment (no login needed!)..." class="form-input flex w-full min-w-0 flex-1 resize-none overflow-hidden rounded-xl text-white focus:outline-0 focus:ring-0 border border-[#42513e] bg-[#1f251d] focus:border-[#42513e] h-12 placeholder:text-[#a5b6a0] p-[15px] text-base font-normal leading-normal" />
         <button type="submit" class="bg-[#53d22c] text-[#131712] font-bold rounded-xl px-4 py-2">Post</button>
       </form>
-      <?php else: ?>
-      <div class="text-[#a5b6a0] text-sm mt-2">Login to post a comment.</div>
-      <?php endif; ?>
     </div>
   </div>
 </div>
